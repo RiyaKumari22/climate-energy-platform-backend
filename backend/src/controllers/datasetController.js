@@ -1,16 +1,46 @@
-
 const prisma = require("../services/prisma");
 const validateCSV = require("../services/csvValidator");
+
+// =====================================================
+// Validate Domain
+// =====================================================
+
+const validateDomain = (domain) => {
+  const allowedDomains = [
+    "CLIMATE",
+    "ENERGY",
+    "POWER",
+  ];
+
+  if (!allowedDomains.includes(domain)) {
+    return {
+      valid: false,
+      message:
+        "Invalid domain. Allowed domains are CLIMATE, ENERGY and POWER",
+    };
+  }
+
+  return {
+    valid: true,
+  };
+};
 
 // =====================================================
 // Validate Data Type + Chart Type
 // =====================================================
 
-const validateChartConfiguration = (dataType, chartType) => {
+const validateChartConfiguration = (
+  dataType,
+  chartType
+) => {
   const allowedCharts = {
     LATLONG: ["MAP"],
     STATE: ["HEATMAP"],
-    TIMESERIES: ["LINE", "BAR", "AREA"],
+    TIMESERIES: [
+      "LINE",
+      "BAR",
+      "AREA",
+    ],
   };
 
   if (!allowedCharts[dataType]) {
@@ -32,13 +62,16 @@ const validateChartConfiguration = (dataType, chartType) => {
   };
 };
 
-
 // =====================================================
 // Upload Dataset
 // =====================================================
 
 const uploadDataset = async (req, res) => {
   try {
+    // -------------------------------------------------
+    // Check CSV file
+    // -------------------------------------------------
+
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -54,7 +87,16 @@ const uploadDataset = async (req, res) => {
       description,
     } = req.body;
 
-    if (!title || !domain || !dataType || !chartType) {
+    // -------------------------------------------------
+    // Required fields
+    // -------------------------------------------------
+
+    if (
+      !title ||
+      !domain ||
+      !dataType ||
+      !chartType
+    ) {
       return res.status(400).json({
         success: false,
         message:
@@ -62,11 +104,29 @@ const uploadDataset = async (req, res) => {
       });
     }
 
-    // Validate chart configuration
-    const chartValidation = validateChartConfiguration(
-      dataType,
-      chartType
-    );
+    // -------------------------------------------------
+    // Validate Domain
+    // -------------------------------------------------
+
+    const domainValidation =
+      validateDomain(domain);
+
+    if (!domainValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: domainValidation.message,
+      });
+    }
+
+    // -------------------------------------------------
+    // Validate Chart Configuration
+    // -------------------------------------------------
+
+    const chartValidation =
+      validateChartConfiguration(
+        dataType,
+        chartType
+      );
 
     if (!chartValidation.valid) {
       return res.status(400).json({
@@ -75,7 +135,10 @@ const uploadDataset = async (req, res) => {
       });
     }
 
+    // -------------------------------------------------
     // Validate CSV
+    // -------------------------------------------------
+
     const validation = validateCSV(
       req.file.buffer,
       dataType
@@ -89,35 +152,55 @@ const uploadDataset = async (req, res) => {
       });
     }
 
-    const dataset = await prisma.dataset.create({
-      data: {
-        title,
-        domain,
-        dataType,
-        chartType,
-        description: description || null,
-        status: "PENDING",
-        uploadedById: req.user.id,
+    // -------------------------------------------------
+    // Create Dataset
+    // -------------------------------------------------
 
-        records: {
-          create: validation.rows.map((row) => ({
-            data: row,
-          })),
-        },
-      },
+    const dataset =
+      await prisma.dataset.create({
+        data: {
+          title: title.trim(),
 
-      include: {
-        records: true,
+          domain,
 
-        uploadedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+          dataType,
+
+          chartType,
+
+          description: description
+            ? description.trim()
+            : null,
+
+          // New datasets always require approval
+          status: "PENDING",
+
+          uploadedById: req.user.id,
+
+          records: {
+            create: validation.rows.map(
+              (row) => ({
+                data: row,
+              })
+            ),
           },
         },
-      },
-    });
+
+        include: {
+          uploadedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+
+          records: true,
+        },
+      });
+
+    // -------------------------------------------------
+    // Success
+    // -------------------------------------------------
 
     return res.status(201).json({
       success: true,
@@ -126,25 +209,24 @@ const uploadDataset = async (req, res) => {
       dataset,
     });
   } catch (error) {
-    console.error("Upload dataset error:", error);
+    console.error(
+      "Upload dataset error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to upload dataset",
-      error: error.message,
     });
   }
 };
 
-
 // =====================================================
-// Get All Datasets - Admin / Super Admin
+// Get All Datasets
 // =====================================================
 
 const getAllDatasets = async (req, res) => {
   try {
-    // Super Admin can see all datasets.
-    // Normal Admin can only see datasets they uploaded.
     const where =
       req.user.role === "SUPER_ADMIN"
         ? {}
@@ -152,63 +234,74 @@ const getAllDatasets = async (req, res) => {
             uploadedById: req.user.id,
           };
 
-    const datasets = await prisma.dataset.findMany({
-      where,
+    const datasets =
+      await prisma.dataset.findMany({
+        where,
 
-      orderBy: {
-        createdAt: "desc",
-      },
-
-      include: {
-        uploadedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+        orderBy: {
+          createdAt: "desc",
         },
 
-        approvedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+        include: {
+          uploadedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
-        },
 
-        records: true,
-      },
-    });
+          approvedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+
+          records: true,
+        },
+      });
 
     return res.status(200).json({
       success: true,
       datasets,
     });
   } catch (error) {
-    console.error("Get datasets error:", error);
+    console.error(
+      "Get datasets error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to fetch datasets",
-      error: error.message,
     });
   }
 };
 
-
 // =====================================================
-// Approve Dataset - Super Admin
+// Approve Dataset
+// Super Admin only
 // =====================================================
 
 const approveDataset = async (req, res) => {
   try {
-    const { id } = req.params;
+    const datasetId = Number(req.params.id);
 
-    const dataset = await prisma.dataset.findUnique({
-      where: {
-        id: Number(id),
-      },
-    });
+    if (!Number.isInteger(datasetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid dataset ID",
+      });
+    }
+
+    const dataset =
+      await prisma.dataset.findUnique({
+        where: {
+          id: datasetId,
+        },
+      });
 
     if (!dataset) {
       return res.status(404).json({
@@ -217,17 +310,18 @@ const approveDataset = async (req, res) => {
       });
     }
 
-    const updatedDataset = await prisma.dataset.update({
-      where: {
-        id: Number(id),
-      },
+    const updatedDataset =
+      await prisma.dataset.update({
+        where: {
+          id: datasetId,
+        },
 
-      data: {
-        status: "APPROVED",
-        approvedById: req.user.id,
-        publishedAt: new Date(),
-      },
-    });
+        data: {
+          status: "APPROVED",
+          approvedById: req.user.id,
+          publishedAt: new Date(),
+        },
+      });
 
     return res.status(200).json({
       success: true,
@@ -235,30 +329,40 @@ const approveDataset = async (req, res) => {
       dataset: updatedDataset,
     });
   } catch (error) {
-    console.error("Approve dataset error:", error);
+    console.error(
+      "Approve dataset error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to approve dataset",
-      error: error.message,
     });
   }
 };
 
-
 // =====================================================
-// Reject Dataset - Super Admin
+// Reject Dataset
+// Super Admin only
 // =====================================================
 
 const rejectDataset = async (req, res) => {
   try {
-    const { id } = req.params;
+    const datasetId = Number(req.params.id);
 
-    const dataset = await prisma.dataset.findUnique({
-      where: {
-        id: Number(id),
-      },
-    });
+    if (!Number.isInteger(datasetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid dataset ID",
+      });
+    }
+
+    const dataset =
+      await prisma.dataset.findUnique({
+        where: {
+          id: datasetId,
+        },
+      });
 
     if (!dataset) {
       return res.status(404).json({
@@ -267,17 +371,18 @@ const rejectDataset = async (req, res) => {
       });
     }
 
-    const updatedDataset = await prisma.dataset.update({
-      where: {
-        id: Number(id),
-      },
+    const updatedDataset =
+      await prisma.dataset.update({
+        where: {
+          id: datasetId,
+        },
 
-      data: {
-        status: "REJECTED",
-        approvedById: null,
-        publishedAt: null,
-      },
-    });
+        data: {
+          status: "REJECTED",
+          approvedById: null,
+          publishedAt: null,
+        },
+      });
 
     return res.status(200).json({
       success: true,
@@ -285,19 +390,21 @@ const rejectDataset = async (req, res) => {
       dataset: updatedDataset,
     });
   } catch (error) {
-    console.error("Reject dataset error:", error);
+    console.error(
+      "Reject dataset error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to reject dataset",
-      error: error.message,
     });
   }
 };
 
-
 // =====================================================
-// Get Public Approved Datasets
+// Get Public Datasets
+// Only APPROVED datasets are visible
 // =====================================================
 
 const getPublicDatasets = async (req, res) => {
@@ -308,45 +415,73 @@ const getPublicDatasets = async (req, res) => {
       status: "APPROVED",
     };
 
+    // -------------------------------------------------
+    // Optional domain filter
+    // -------------------------------------------------
+
     if (domain) {
+      const domainValidation =
+        validateDomain(domain);
+
+      if (!domainValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: domainValidation.message,
+        });
+      }
+
       where.domain = domain;
     }
 
-    const datasets = await prisma.dataset.findMany({
-      where,
+    // -------------------------------------------------
+    // Get approved datasets
+    // -------------------------------------------------
 
-      orderBy: {
-        publishedAt: "desc",
-      },
+    const datasets =
+      await prisma.dataset.findMany({
+        where,
 
-      include: {
-        records: true,
-      },
-    });
+        orderBy: {
+          publishedAt: "desc",
+        },
+
+        include: {
+          records: true,
+        },
+      });
 
     return res.status(200).json({
       success: true,
       datasets,
     });
   } catch (error) {
-    console.error("Get public datasets error:", error);
+    console.error(
+      "Get public datasets error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to fetch public datasets",
-      error: error.message,
     });
   }
 };
 
-
 // =====================================================
-// Update Dataset - Super Admin
+// Update Dataset
+// Super Admin only
 // =====================================================
 
 const updateDataset = async (req, res) => {
   try {
-    const { id } = req.params;
+    const datasetId = Number(req.params.id);
+
+    if (!Number.isInteger(datasetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid dataset ID",
+      });
+    }
 
     const {
       title,
@@ -356,7 +491,16 @@ const updateDataset = async (req, res) => {
       description,
     } = req.body;
 
-    if (!title || !domain || !dataType || !chartType) {
+    // -------------------------------------------------
+    // Required fields
+    // -------------------------------------------------
+
+    if (
+      !title ||
+      !domain ||
+      !dataType ||
+      !chartType
+    ) {
       return res.status(400).json({
         success: false,
         message:
@@ -364,11 +508,29 @@ const updateDataset = async (req, res) => {
       });
     }
 
-    // Validate chart configuration
-    const chartValidation = validateChartConfiguration(
-      dataType,
-      chartType
-    );
+    // -------------------------------------------------
+    // Validate Domain
+    // -------------------------------------------------
+
+    const domainValidation =
+      validateDomain(domain);
+
+    if (!domainValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: domainValidation.message,
+      });
+    }
+
+    // -------------------------------------------------
+    // Validate Chart
+    // -------------------------------------------------
+
+    const chartValidation =
+      validateChartConfiguration(
+        dataType,
+        chartType
+      );
 
     if (!chartValidation.valid) {
       return res.status(400).json({
@@ -377,11 +539,16 @@ const updateDataset = async (req, res) => {
       });
     }
 
-    const dataset = await prisma.dataset.findUnique({
-      where: {
-        id: Number(id),
-      },
-    });
+    // -------------------------------------------------
+    // Find Dataset
+    // -------------------------------------------------
+
+    const dataset =
+      await prisma.dataset.findUnique({
+        where: {
+          id: datasetId,
+        },
+      });
 
     if (!dataset) {
       return res.status(404).json({
@@ -390,19 +557,42 @@ const updateDataset = async (req, res) => {
       });
     }
 
-    const updatedDataset = await prisma.dataset.update({
-      where: {
-        id: Number(id),
-      },
+    // -------------------------------------------------
+    // Prevent incompatible data type change
+    // -------------------------------------------------
 
-      data: {
-        title,
-        domain,
-        dataType,
-        chartType,
-        description: description || null,
-      },
-    });
+    if (dataset.dataType !== dataType) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Data type cannot be changed without uploading a new CSV file because the existing records use the current data type schema.",
+      });
+    }
+
+    // -------------------------------------------------
+    // Update
+    // -------------------------------------------------
+
+    const updatedDataset =
+      await prisma.dataset.update({
+        where: {
+          id: datasetId,
+        },
+
+        data: {
+          title: title.trim(),
+
+          domain,
+
+          dataType,
+
+          chartType,
+
+          description: description
+            ? description.trim()
+            : null,
+        },
+      });
 
     return res.status(200).json({
       success: true,
@@ -410,30 +600,40 @@ const updateDataset = async (req, res) => {
       dataset: updatedDataset,
     });
   } catch (error) {
-    console.error("Update dataset error:", error);
+    console.error(
+      "Update dataset error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to update dataset",
-      error: error.message,
     });
   }
 };
 
-
 // =====================================================
-// Delete Dataset - Super Admin
+// Delete Dataset
+// Super Admin only
 // =====================================================
 
 const deleteDataset = async (req, res) => {
   try {
-    const { id } = req.params;
+    const datasetId = Number(req.params.id);
 
-    const dataset = await prisma.dataset.findUnique({
-      where: {
-        id: Number(id),
-      },
-    });
+    if (!Number.isInteger(datasetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid dataset ID",
+      });
+    }
+
+    const dataset =
+      await prisma.dataset.findUnique({
+        where: {
+          id: datasetId,
+        },
+      });
 
     if (!dataset) {
       return res.status(404).json({
@@ -444,7 +644,7 @@ const deleteDataset = async (req, res) => {
 
     await prisma.dataset.delete({
       where: {
-        id: Number(id),
+        id: datasetId,
       },
     });
 
@@ -453,16 +653,17 @@ const deleteDataset = async (req, res) => {
       message: "Dataset deleted successfully",
     });
   } catch (error) {
-    console.error("Delete dataset error:", error);
+    console.error(
+      "Delete dataset error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to delete dataset",
-      error: error.message,
     });
   }
 };
-
 
 // =====================================================
 // Export Controllers
