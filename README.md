@@ -16,15 +16,15 @@ https://github.com/RiyaKumari22/climate-energy-platform-backend
 
 Frontend:
 
-https://YOUR-FRONTEND-RENDER-URL
+https://climate-energy-platform-frontend.onrender.com/
 
 Backend API:
 
-https://YOUR-BACKEND-RENDER-URL
+https://climate-energy-platform-backend.onrender.com
 
 Health Check:
 
-https://YOUR-BACKEND-RENDER-URL/api/health
+https://climate-energy-platform-backend.onrender.com/api/health
 
 ## Implemented Features
 
